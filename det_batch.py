@@ -40,8 +40,8 @@ LABEL_NAMES = None
 DATA_SHAPES = [('data', (1, 3, LONG_SIDE, SHORT_SIDE)), ('im_info', (1, 3))]
 LABEL_SHAPES = None
 # visualization
-CONF_THRESH = 0.7
-#CONF_THRESH = 0.8
+#CONF_THRESH = 0.7
+CONF_THRESH = 0.9
 NMS_THRESH = 0.3
 nms = py_nms_wrapper(NMS_THRESH)
 
@@ -101,6 +101,7 @@ def demo_net(predictor, image_name, result_txt,vis=False):
     :return: None
     """
     assert os.path.exists(image_name), image_name + ' not found'
+    print image_name
     im = cv2.imread(image_name)
     data_batch, data_names, im_scale = generate_batch(im)
     scores, boxes, data_dict = im_detect(predictor, data_batch, data_names, im_scale)
@@ -129,7 +130,7 @@ def demo_net(predictor, image_name, result_txt,vis=False):
             logger.info('%s' % boxes)
             #print len(boxes)
             for iii in range(0,len(boxes)):
-                result_txt.write(str(boxes[iii][0])+' '+str(boxes[iii][1])+' '+str(boxes[iii][2])+' '+str(boxes[iii][3])+' ')
+                result_txt.write(str(boxes[iii][0])+' '+str(boxes[iii][1])+' '+str(boxes[iii][2])+' '+str(boxes[iii][3])+' '+str(boxes[iii][4])+' ')
                 
     
     result_txt.write('\n')
@@ -159,11 +160,15 @@ def main():
     ctx = mx.gpu(args.gpu)
     symbol = get_vgg_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
     predictor = get_net(symbol, args.prefix, args.epoch, ctx)
-    result_txt = open('det_umd3_align.txt','wb')
+    txt_name = args.image_path[:-1]
+    result_txt = open(txt_name+'.txt','wb')
     vis = False
-    for img in os.listdir(args.image_path):
-    
-        demo_net(predictor, args.image_path + img , result_txt, vis)
+    for directory in os.listdir(args.image_path):
+        print directory[-4:]
+        if ((directory[-4:]!='.txt')and(directory[-4:]!='json'))and(directory!='cache'):
+            img_dir = args.image_path+directory
+            for img in os.listdir(img_dir):
+                demo_net(predictor, img_dir+'/' + img , result_txt, vis)
     result_txt.close()
 
 if __name__ == '__main__':

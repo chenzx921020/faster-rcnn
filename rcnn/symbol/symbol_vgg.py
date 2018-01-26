@@ -21,6 +21,24 @@ import proposal_target
 from rcnn.config import config
 
 
+def LargeSepConv(data, kernel_size=15, Cmid=64, Cout=490, name='LSC'):
+    #branch1_1
+    pad = int(kernel_size / 2)
+    conv1_1 = mx.symbol.Convolution(data=data, kernel=(kernel_size, 1), pad=(pad, 0), num_filter=Cmid, workspace=2048, name=name + '_1_1')
+    #relu1_1 = mx.symbol.Activation(data=conv1_1, act_type="relu", name=name + "_relu1_1")
+    #branch1_2
+    conv1_2 = mx.symbol.Convolution(data=conv1_1, kernel=(1, kernel_size), pad=(0, pad), num_filter=Cout, workspace=2048, name=name + '_1_2')
+    #relu1_2 = mx.symbol.Activation(data=conv1_2, act_type="relu", name=name + "_relu1_1")
+    #branch2_1
+    conv2_1 = mx.symbol.Convolution(data=data, kernel=(1, kernel_size), pad=(0, pad), num_filter=Cmid, workspace=2048, name=name + '_2_1')
+    #relu2_1 = mx.symbol.Activation(data=conv2_1, act_type="relu", name=name + "_relu1_1")
+    #branch2_2
+    conv2_2 = mx.symbol.Convolution(data=conv2_1, kernel=(kernel_size, 1), pad=(pad, 0), num_filter=Cout, workspace=2048, name=name + '_2_2')
+    #relu2_2 = mx.symbol.Activation(data=conv2_2, act_type="relu", name=name + "_relu1_1")
+    return mx.symbol.Activation(data=conv1_2 + conv2_2, act_type='relu', name=name + "_relu_out")
+
+
+
 def get_vgg_conv(data):
     """
     shared convolutional layers
@@ -107,8 +125,9 @@ def get_vgg_rcnn(num_classes=config.NUM_CLASSES):
     # Fast R-CNN
     #pool5 = mx.symbol.ROIPooling(
     #    name='roi_pool5', data=relu5_3, rois=rois, pooled_size=(7, 7), spatial_scale=1.0 / config.RCNN_FEAT_STRIDE)
+    relu5_3_light=LargeSepConv(data=relu5_3, kernel_size=15, Cmid=32, Cout=98)   
     
-    pool5 = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=relu5_3,rois=rois,pooled_size=(7, 7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
+    pool5 = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=relu5_3_light,rois=rois,pooled_size=(7, 7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
     
     # group 6
     flatten = mx.symbol.Flatten(data=pool5, name="flatten")
@@ -154,7 +173,9 @@ def get_vgg_rcnn_test(num_classes=config.NUM_CLASSES):
     # Fast R-CNN
     #pool5 = mx.symbol.ROIPooling(
     #    name='roi_pool5', data=relu5_3, rois=rois, pooled_size=(7, 7), spatial_scale=1.0 / config.RCNN_FEAT_STRIDE)
-    pool5 = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=relu5_3,rois=rois,pooled_size=(7, 7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
+    ##align and LightHead
+    relu5_3_light=LargeSepConv(data=relu5_3, kernel_size=15, Cmid=32, Cout=98)
+    pool5 = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=relu5_3_light,rois=rois,pooled_size=(7, 7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
     # group 6
     flatten = mx.symbol.Flatten(data=pool5, name="flatten")
     fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=4096, name="fc6")
@@ -276,10 +297,21 @@ def get_vgg_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
 
     # shared convolutional layers
     relu5_3 = get_vgg_conv(data)
+    defo_off = mx.symbol.Convolution(name='defo_off', data = relu5_3,num_filter=72, pad=(2, 2), kernel=(3, 3), stride=(1, 1), dilate=(2, 2), cudnn_off=True)
+    defo_fea = mx.contrib.symbol.DeformableConvolution(name='defo_fea', data=relu5_3, offset=defo_off,num_filter=512, pad=(2, 2), kernel=(3, 3), num_deformable_group=4,stride=(1, 1), dilate=(2, 2), no_bias=True)
+    squeeze = mx.sym.Pooling(data=defo_fea, global_pool=True, kernel=(7, 7), pool_type='avg', name= 'squeeze')
+    squeeze = mx.symbol.Flatten(data=squeeze, name= 'squeeze_flatten')
+    excitation = mx.symbol.FullyConnected(data=squeeze, num_hidden=int(512*0.25), name= 'excitation1')
+    excitation = mx.sym.Activation(data=excitation, act_type='relu', name= 'excitation1_relu')
+    excitation = mx.symbol.FullyConnected(data=excitation, num_hidden=512, name= 'excitation2')
+    excitation = mx.sym.Activation(data=excitation, act_type='sigmoid', name= 'excitation2_sigmoid')
+    excitation_fea = mx.symbol.broadcast_mul(defo_fea, mx.symbol.reshape(data=excitation, shape=(-1, 512, 1, 1)))
+
+    
 
     # RPN
     rpn_conv = mx.symbol.Convolution(
-        data=relu5_3, kernel=(3, 3), pad=(1, 1), num_filter=512, name="rpn_conv_3x3")
+        data=excitation_fea, kernel=(3, 3), pad=(1, 1), num_filter=512, name="rpn_conv_3x3")
     rpn_relu = mx.symbol.Activation(data=rpn_conv, act_type="relu", name="rpn_relu")
     rpn_cls_score = mx.symbol.Convolution(
         data=rpn_relu, kernel=(1, 1), pad=(0, 0), num_filter=2 * num_anchors, name="rpn_cls_score")
@@ -310,11 +342,23 @@ def get_vgg_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
     # Fast R-CNN
     #pool5 = mx.symbol.ROIPooling(
     #    name='roi_pool5', data=relu5_3, rois=rois, pooled_size=(7, 7), spatial_scale=1.0 / config.RCNN_FEAT_STRIDE)
-    pool5 = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=relu5_3,rois=rois,pooled_size=(7,7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE) 
+    # se structure
+    '''
+    squeeze = mx.sym.Pooling(data=relu5_3, global_pool=True, kernel=(7, 7), pool_type='avg', name= 'squeeze')                                                                                          
+    squeeze = mx.symbol.Flatten(data=squeeze, name= 'squeeze_flatten')                                        
+    excitation = mx.symbol.FullyConnected(data=squeeze, num_hidden=int(512*0.25), name= 'excitation1')        
+    excitation = mx.sym.Activation(data=excitation, act_type='relu', name= 'excitation1_relu')                
+    excitation = mx.symbol.FullyConnected(data=excitation, num_hidden=512, name= 'excitation2')               
+    excitation = mx.sym.Activation(data=excitation, act_type='sigmoid', name= 'excitation2_sigmoid')          
+    excitation_fea = mx.symbol.broadcast_mul(relu5_3, mx.symbol.reshape(data=excitation, shape=(-1, 512, 1, 1)))
+    '''
+    relu5_3_light=LargeSepConv(data=excitation_fea, kernel_size=15, Cmid=32, Cout=98)
+    pool5 = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=relu5_3_light,rois=rois,pooled_size=(7,7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE) 
     
     # group 6
     flatten = mx.symbol.Flatten(data=pool5, name="flatten")
-    fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=4096, name="fc6")
+    fc6 = mx.symbol.FullyConnected(data=flatten,num_hidden=4096,name="fc6new")
+    #fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=4096, name="fc6")
     relu6 = mx.symbol.Activation(data=fc6, act_type="relu", name="relu6")
     drop6 = mx.symbol.Dropout(data=relu6, p=0.5, name="drop6")
     # group 7
@@ -352,10 +396,20 @@ def get_vgg_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS
 
     # shared convolutional layers
     relu5_3 = get_vgg_conv(data)
+    defo_off = mx.symbol.Convolution(name='defo_off', data = relu5_3,num_filter=72, pad=(2, 2), kernel=(3, 3), stride=(1, 1), dilate=(2, 2), cudnn_off=True)
+    defo_fea = mx.contrib.symbol.DeformableConvolution(name='defo_fea', data=relu5_3, offset=defo_off,num_filter=512, pad=(2, 2), kernel=(3, 3), num_deformable_group=4,stride=(1, 1), dilate=(2, 2),no_bias=True)
+    squeeze = mx.sym.Pooling(data=defo_fea, global_pool=True, kernel=(7, 7), pool_type='avg', name= 'squeeze')
+    squeeze = mx.symbol.Flatten(data=squeeze, name= 'squeeze_flatten')
+    excitation = mx.symbol.FullyConnected(data=squeeze, num_hidden=int(512*0.25), name= 'excitation1')
+    excitation = mx.sym.Activation(data=excitation, act_type='relu', name= 'excitation1_relu')
+    excitation = mx.symbol.FullyConnected(data=excitation, num_hidden=512, name= 'excitation2')                                                                                                         
+    excitation = mx.sym.Activation(data=excitation, act_type='sigmoid', name= 'excitation2_sigmoid')
+    excitation_fea = mx.symbol.broadcast_mul(defo_fea, mx.symbol.reshape(data=excitation, shape=(-1, 512, 1, 1)))
+
 
     # RPN layers
     rpn_conv = mx.symbol.Convolution(
-        data=relu5_3, kernel=(3, 3), pad=(1, 1), num_filter=512, name="rpn_conv_3x3")
+        data=excitation_fea, kernel=(3, 3), pad=(1, 1), num_filter=512, name="rpn_conv_3x3")
     rpn_relu = mx.symbol.Activation(data=rpn_conv, act_type="relu", name="rpn_relu")
     rpn_cls_score = mx.symbol.Convolution(
         data=rpn_relu, kernel=(1, 1), pad=(0, 0), num_filter=2 * num_anchors, name="rpn_cls_score")
@@ -405,10 +459,23 @@ def get_vgg_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS
     # Fast R-CNN
     #pool5 = mx.symbol.ROIPooling(
     #    name='roi_pool5', data=relu5_3, rois=rois, pooled_size=(7, 7), spatial_scale=1.0 / config.RCNN_FEAT_STRIDE)
-    pool5 = mx.contrib.sym.ROIAlign_v1(data=relu5_3,rois=rois,pooled_size=(7, 7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
+    
+    # se structure                                                                                             
+    '''
+    squeeze = mx.sym.Pooling(data=relu5_3, global_pool=True, kernel=(7, 7), pool_type='avg', name= 'squeeze')                                                                                          
+    squeeze = mx.symbol.Flatten(data=squeeze, name= 'squeeze_flatten')                                        
+    excitation = mx.symbol.FullyConnected(data=squeeze, num_hidden=int(512*0.25), name= 'excitation1')        
+    excitation = mx.sym.Activation(data=excitation, act_type='relu', name= 'excitation1_relu')                
+    excitation = mx.symbol.FullyConnected(data=excitation, num_hidden=512, name= 'excitation2')               
+    excitation = mx.sym.Activation(data=excitation, act_type='sigmoid', name= 'excitation2_sigmoid')          
+    excitation_fea = mx.symbol.broadcast_mul(relu5_3, mx.symbol.reshape(data=excitation, shape=(-1, 512, 1, 1)))
+    '''
+    relu5_3_light=LargeSepConv(data=excitation_fea, kernel_size=15, Cmid=32, Cout=98)
+    pool5 = mx.contrib.sym.ROIAlign_v1(data=relu5_3_light,rois=rois,pooled_size=(7, 7),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
     # group 6
     flatten = mx.symbol.Flatten(data=pool5, name="flatten")
-    fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=4096, name="fc6")
+    fc6 = mx.symbol.FullyConnected(data=flatten,num_hidden=4096,name="fc6new")
+    #fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=4096, name="fc6")
     relu6 = mx.symbol.Activation(data=fc6, act_type="relu", name="relu6")
     drop6 = mx.symbol.Dropout(data=relu6, p=0.5, name="drop6")
     # group 7

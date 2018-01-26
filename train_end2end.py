@@ -34,7 +34,7 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
               lr=0.001, lr_step='5'):
     # setup config
     config.TRAIN.BATCH_IMAGES = 1
-    config.TRAIN.BATCH_ROIS = 128
+    config.TRAIN.BATCH_ROIS = 256
     config.TRAIN.BBOX_NORMALIZATION_PRECOMPUTED = True
     config.TRAIN.END2END = True
 
@@ -81,6 +81,10 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
     # load and initialize params
     if args.resume:
         arg_params, aux_params = load_param(prefix, begin_epoch, convert=True)
+    
+    #arg_params=None
+    #aux_params=None
+    
     else:
         arg_params, aux_params = load_param(pretrained, epoch, convert=True)
         arg_params['rpn_conv_3x3_weight'] = mx.random.normal(0, 0.01, shape=arg_shape_dict['rpn_conv_3x3_weight'])
@@ -93,7 +97,28 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
         arg_params['cls_score_bias'] = mx.nd.zeros(shape=arg_shape_dict['cls_score_bias'])
         arg_params['bbox_pred_weight'] = mx.random.normal(0, 0.001, shape=arg_shape_dict['bbox_pred_weight'])
         arg_params['bbox_pred_bias'] = mx.nd.zeros(shape=arg_shape_dict['bbox_pred_bias'])
-
+        ##ADD Largesepconv params
+        arg_params['LSC_1_1_weight'] = mx.random.normal(0, 0.001,shape=arg_shape_dict['LSC_1_1_weight'])
+        arg_params['LSC_1_1_bias'] = mx.nd.zeros(shape=arg_shape_dict['LSC_1_1_bias'])
+        arg_params['LSC_1_2_weight'] = mx.random.normal(0, 0.001, shape=arg_shape_dict['LSC_1_2_weight'])
+        arg_params['LSC_1_2_bias'] = mx.nd.zeros(shape=arg_shape_dict['LSC_1_2_bias'])
+        arg_params['LSC_2_1_weight'] = mx.random.normal(0, 0.001, shape=arg_shape_dict['LSC_2_1_weight'])
+        arg_params['LSC_2_1_bias'] = mx.nd.zeros(shape=arg_shape_dict['LSC_2_1_bias'])
+        arg_params['LSC_2_2_weight'] = mx.random.normal(0, 0.001, shape=arg_shape_dict['LSC_2_2_weight'])
+        arg_params['LSC_2_2_bias'] = mx.nd.zeros(shape=arg_shape_dict['LSC_2_2_bias'])
+        ## vgg fc6 modified with LSC
+        arg_params['fc6new_weight'] = mx.random.normal(0, 0.001, shape=arg_shape_dict['fc6new_weight'])
+        arg_params['fc6new_bias'] = mx.nd.zeros(shape=arg_shape_dict['fc6new_bias'])
+        ## se unit
+        arg_params['excitation1_weight'] = mx.random.normal(0,0.001,shape=arg_shape_dict['excitation1_weight'])
+        arg_params['excitation1_bias'] = mx.nd.zeros(shape=arg_shape_dict['excitation1_bias'])
+        arg_params['excitation2_weight'] = mx.random.normal(0,0.001,shape=arg_shape_dict['excitation2_weight'])
+        arg_params['excitation2_bias'] = mx.nd.zeros(shape=arg_shape_dict['excitation2_bias'])
+        ## deformable unit
+        arg_params['defo_off_weight'] = mx.random.normal(0,0.001,shape=arg_shape_dict['defo_off_weight'])
+        arg_params['defo_off_bias'] = mx.nd.zeros(shape=arg_shape_dict['defo_off_bias'])
+        arg_params['defo_fea_weight'] = mx.random.normal(0,0.001,shape=arg_shape_dict['defo_fea_weight'])
+    print sym.list_arguments()
     # check parameter shapes
     for k in sym.list_arguments():
         if k in data_shape_dict:
@@ -105,6 +130,7 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
         assert k in aux_params, k + ' not initialized'
         assert aux_params[k].shape == aux_shape_dict[k], \
             'shape inconsistent for ' + k + ' inferred ' + str(aux_shape_dict[k]) + ' provided ' + str(aux_params[k].shape)
+    
 
     # create solver
     fixed_param_prefix = config.FIXED_PARAMS

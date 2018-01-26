@@ -160,7 +160,7 @@ if CUDA is not None:
             # we're only going to use certain compiler args with nvcc and not with
             # gcc the implementation of this trick is in customize_compiler() below
             extra_compile_args={'gcc': ["-Wno-unused-function"],
-                                'nvcc': ['-arch=sm_35',
+                                'nvcc': ['-arch=sm_32',
                                          '--ptxas-options=-v',
                                          '-c',
                                          '--compiler-options',

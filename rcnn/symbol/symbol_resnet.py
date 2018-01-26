@@ -27,6 +27,21 @@ res_deps = {'50': (3, 4, 6, 3), '101': (3, 4, 23, 3), '152': (3, 8, 36, 3), '200
 units = res_deps['101']
 filter_list = [256, 512, 1024, 2048]
 
+def LargeSepConv(data, kernel_size=15, Cmid=64, Cout=490, name='LSC'):
+    #branch1_1
+    pad = int(kernel_size / 2)
+    conv1_1 = mx.symbol.Convolution(data=data, kernel=(kernel_size, 1), pad=(pad, 0), num_filter=Cmid, workspace=2048, name=name + '_1_1')
+    #relu1_1 = mx.symbol.Activation(data=conv1_1, act_type="relu", name=name + "_relu1_1")
+    #branch1_2
+    conv1_2 = mx.symbol.Convolution(data=conv1_1, kernel=(1, kernel_size), pad=(0, pad), num_filter=Cout, workspace=2048, name=name + '_1_2')
+    #relu1_2 = mx.symbol.Activation(data=conv1_2, act_type="relu", name=name + "_relu1_1")
+    #branch2_1
+    conv2_1 = mx.symbol.Convolution(data=data, kernel=(1, kernel_size), pad=(0, pad), num_filter=Cmid, workspace=2048, name=name + '_2_1')
+    #relu2_1 = mx.symbol.Activation(data=conv2_1, act_type="relu", name=name + "_relu1_1")
+    #branch2_2
+    conv2_2 = mx.symbol.Convolution(data=conv2_1, kernel=(kernel_size, 1), pad=(pad, 0), num_filter=Cout, workspace=2048, name=name + '_2_2')
+    #relu2_2 = mx.symbol.Activation(data=conv2_2, act_type="relu", name=name + "_relu1_1")
+    return mx.symbol.Activation(data=conv1_2 + conv2_2, act_type='relu', name=name + "_relu_out")
 
 def residual_unit(data, num_filter, stride, dim_match, name):
     bn1 = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn1')
@@ -48,7 +63,6 @@ def residual_unit(data, num_filter, stride, dim_match, name):
                                       workspace=workspace, name=name + '_sc')
     sum = mx.sym.ElementWiseSum(*[conv3, shortcut], name=name + '_plus')
     return sum
-
 
 def get_resnet_conv(data):
     # res1
@@ -140,10 +154,11 @@ def get_resnet_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCH
     # Fast R-CNN
     #roi_pool = mx.symbol.ROIPooling(
     #    name='roi_pool5', data=conv_feat, rois=rois, pooled_size=(14, 14), spatial_scale=1.0 / config.RCNN_FEAT_STRIDE)
-    
-    roi_pool = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=conv_feat,rois=rois,pooled_size=(14, 14),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
+    light_head = LargeSepConv(data=conv_feat,kernel_size=15,Cmid=32,Cout=98)
+    roi_pool = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=light_head,rois=rois,pooled_size=(14, 14),feat_stride=1.0,spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
 
     # res5
+    #unit = residual_unit(data=roi_pool,num_filter=filter_list[3],stride=(2,2),dim_match=False, name='stage4_unit1_new')
     unit = residual_unit(data=roi_pool, num_filter=filter_list[3], stride=(2, 2), dim_match=False, name='stage4_unit1')
     for i in range(2, units[3] + 1):
         unit = residual_unit(data=unit, num_filter=filter_list[3], stride=(1, 1), dim_match=True, name='stage4_unit%s' % i)
@@ -209,10 +224,11 @@ def get_resnet_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHO
     # Fast R-CNN
     #roi_pool = mx.symbol.ROIPooling(
     #    name='roi_pool5', data=conv_feat, rois=rois, pooled_size=(14, 14), spatial_scale=1.0 / config.RCNN_FEAT_STRIDE)
-    
-    roi_pool = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=conv_feat,rois=rois,pooled_size=(14, 14),feat_stride=1.0, spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
+    light_head = LargeSepConv(data=conv_feat,kernel_size=15,Cmid=32,Cout=98)
+    roi_pool = mx.contrib.sym.ROIAlign_v1(name='roi_pool5',data=light_head,rois=rois,pooled_size=(14, 14),feat_stride=1.0, spatial_scale=1.0/config.RCNN_FEAT_STRIDE)
     
     # res5
+    #unit=residual_unit(data=roi_pool, num_filter=filter_list[3], stride(2 ,2), dim_match=False, name='stage4_unit1_new')
     unit = residual_unit(data=roi_pool, num_filter=filter_list[3], stride=(2, 2), dim_match=False, name='stage4_unit1')
     for i in range(2, units[3] + 1):
         unit = residual_unit(data=unit, num_filter=filter_list[3], stride=(1, 1), dim_match=True, name='stage4_unit%s' % i)

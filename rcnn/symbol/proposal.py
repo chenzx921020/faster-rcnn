@@ -43,7 +43,6 @@ class ProposalOperator(mx.operator.CustomOp):
         self._output_score = output_score
         self._rpn_pre_nms_top_n = rpn_pre_nms_top_n
         self._rpn_post_nms_top_n = rpn_post_nms_top_n
-        self._threshold = threshold
         self._rpn_min_size = rpn_min_size
 
         logger.debug('feat_stride: %s' % self._feat_stride)
